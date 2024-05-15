@@ -3,6 +3,7 @@
 
 #include "TCPController.h"
 
+#include "ExampleStruct.h"
 #include "Kismet/KismetSystemLibrary.h"
 
 ATCPController::ATCPController()
@@ -33,17 +34,36 @@ bool ATCPController::ClientConnected(FSocket* Socket, const FIPv4Endpoint& FiPv4
 {
 	UKismetSystemLibrary::PrintString(GetWorld(), "CLIENT CONNECTED!");
 
+	ClientRemoteSocket = Socket;
+	
 	TArray<uint8> Bytes;
 	FMemoryWriter MemoryWriter(Bytes);
 
-	FString Message = "Industrial Black Metal is great for studying";
-	MemoryWriter << Message;
+	FExampleInventory Inventory;
 
-	int32 BytesSent = 0;
-	if(!Socket->Send(Bytes.GetData(), Bytes.Num(), BytesSent))
+	for(int32 i = 0; i < 400; ++i)
 	{
-		UKismetSystemLibrary::PrintString(GetWorld(), "Unable to send data");
+		Inventory.InventorySlots.Add(i, FItem());
+		Inventory.InventorySlots[i].Description = "ABC_DDD_" + FString::FromInt(i);
 	}
+	
+	MemoryWriter << Inventory;
+
+	SendBytes(Inventory, EInstruction::REPLICATE_INVENTORY);
+	SendBytes(Inventory, EInstruction::REPLICATE_INVENTORY);
+	
+//	FMemoryReader MemoryReader(Bytes);
+
+//	FExampleInventory Inventory2;
+//	MemoryReader << Inventory2;
+	
+//	UE_LOG(LogTemp, Warning, TEXT("Inventory: %s"), *Inventory2.InventorySlots[1].Description);
+	
+//	int32 BytesSent = 0;
+//	if(!Socket->Send(Bytes.GetData(), Bytes.Num(), BytesSent))
+//	{
+//		UKismetSystemLibrary::PrintString(GetWorld(), "Unable to send data");
+//	}
 	
 	return true;
 }
@@ -85,16 +105,55 @@ void ATCPController::Tick(float DeltaTime)
 					int32 BytesRead = 0;
 					if(ClientSocket->Recv(Bytes.GetData(), PendingData, BytesRead))
 					{
-						FString Message = "";
-						FMemoryReader MemoryReader(Bytes);
+						BytesSum.Append(Bytes);
+						
+						uint32 AwaitingBytesNum = 0;
+						bool ShouldContinue = true;
+						
+						while(ShouldContinue)
+						{
+							FMemoryReader MemoryReader(BytesSum);
+							MemoryReader << AwaitingBytesNum;
 
-						MemoryReader << Message;
-
-						UKismetSystemLibrary::PrintString(GetWorld(), Message, true, true, FLinearColor::Red, 50.f);
+							if(AwaitingBytesNum <= static_cast<uint32>(BytesSum.Num()) && BytesSum.Num() != 0)
+							{
+								BytesSum.RemoveAt(0, 4);
+								ProcessBytes(BytesSum);
+								BytesSum.RemoveAt(0, AwaitingBytesNum - 4);
+							}
+							else
+							{
+								ShouldContinue = false;
+							}
+						}
+					}
+					else
+					{
+						UKismetSystemLibrary::PrintString(GetWorld(), "Unable to receive data");
 					}
 				}
 			}
 		}
+	}
+}
+
+void ATCPController::ProcessBytes(const TArray<uint8>& Array)
+{
+	FMemoryReader MemoryReader(Array);
+
+	EInstruction Instruction;
+
+	MemoryReader << Instruction;
+
+	switch (Instruction)
+	{
+		case EInstruction::REPLICATE_INVENTORY:
+		{
+			FExampleInventory Inventory;
+			MemoryReader << Inventory;
+			UE_LOG(LogTemp, Warning, TEXT("Inventory: %s"), *Inventory.InventorySlots[1].Description);
+		}
+		break;
 	}
 }
 
